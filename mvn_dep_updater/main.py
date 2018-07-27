@@ -2,29 +2,16 @@ import os
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 import argparse
-import sys
+from mvn_dep_updater.data.path_tree import PathTree
+from mvn_dep_updater.data.project import Project
 
-class Project:
-    def __init__(self, projectName, artifactIdMapVersion, projectVersion):
-        self.projectName = projectName
-        self.artifactIdMapVersion = artifactIdMapVersion
-        self.projectVersion = projectVersion
-
-
-class PathTree:
-    def __init__(self, nameOfOwner, maxLen, paths):
-        self.nameOfOwner = nameOfOwner
-        self.maxLen = maxLen
-        self.paths = paths
-
-
-def getProjectByName(name, projectsWithFeature):
+def get_project_by_name(name, projectsWithFeature):
     for project in projectsWithFeature:
         if name == project.projectName:
             return project
 
 
-def searchForProjectPath(projectNameAndPaths):
+def search_for_project_path(projectNameAndPaths):
     for root, dirs, files in os.walk(os.getcwd()):
         for file in files:
             if file.endswith("pom.xml"):
@@ -35,12 +22,12 @@ def searchForProjectPath(projectNameAndPaths):
                     projectNameAndPaths[d.text] = os.path.join(root, file)
 
 
-def addBaseProjectUpdatingList(baseProjects, updatingList):
+def add_base_project_updating_list(baseProjects, updatingList):
     for project in baseProjects:
         updatingList.append(project)
 
 
-def mapProjects(projectNameAndPath, dependencyMap, artifactIdMap, specificVersion):
+def map_projects(projectNameAndPath, dependencyMap, artifactIdMap, specificVersion):
     for paths in projectNameAndPath.values():
         namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
         tree = ET.parse(paths)
@@ -56,13 +43,13 @@ def mapProjects(projectNameAndPath, dependencyMap, artifactIdMap, specificVersio
             specificVersion.append(sVersion.text[:len(sVersion.text) - 9])
 
 
-def getBaseProjects(projectNameAndPath, baseProjectList, dependencyMap):
+def get_base_projects(projectNameAndPath, baseProjectList, dependencyMap):
     for project in projectNameAndPath.keys():
         if dependencyMap.get(project) == None:
             baseProjectList.append(project)
 
 
-def isClientVersionCompatible(requestVersion, minClientVersion):
+def is_client_version_compatible(requestVersion, minClientVersion):
     requestVersion = [int(i) for i in requestVersion.split('.')]
     minClientVersion = [int(i) for i in minClientVersion.split('.')]
 
@@ -81,8 +68,8 @@ def isClientVersionCompatible(requestVersion, minClientVersion):
     return True
 
 
-def createProjectListWithFeatures(dependencyMap, artifactIdMap, projectWithFeatures, specificVersion,
-                                  projectNameAndPath):
+def create_project_list_with_features(dependencyMap, artifactIdMap, projectWithFeatures, specificVersion,
+                                      projectNameAndPath):
     count = 0
 
     for project in projectNameAndPath.keys():
@@ -97,25 +84,25 @@ def createProjectListWithFeatures(dependencyMap, artifactIdMap, projectWithFeatu
             projectWithFeatures.append(newProject)
 
 
-def findPaths(project, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists):
+def find_paths(project, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists):
     if project in baseProjectList:
         balancedPathLists.append(balancedPathList.copy())
         return
     else:
-        getProject = getProjectByName(project, projectsWithFeature)
+        getProject = get_project_by_name(project, projectsWithFeature)
         for dependency in getProject.artifactIdMapVersion.keys():
             if dependency not in baseProjectList:
                 balancedPathList.append(dependency)
-            findPaths(dependency, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists)
+            find_paths(dependency, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists)
             balancedPathList.clear()
 
 
-def createTree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees):
+def create_tree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees):
     balancedPathLists = []
     balancedPathList = []
     x = 0
     for project in projectNameAndPath.keys():
-        findPaths(project, baseProjects, projectsWithFeature, balancedPathList, balancedPathLists)
+        find_paths(project, baseProjects, projectsWithFeature, balancedPathList, balancedPathLists)
         for i in balancedPathLists:
             if x < len(i):
                 x = len(i)
@@ -126,9 +113,9 @@ def createTree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees):
         balancedPathList.clear()
 
 
-def updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList):
+def updating_projects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList):
     for pName in updatingList:
-        compareProject = getProjectByName(pName, projectsWithFeature)
+        compareProject = get_project_by_name(pName, projectsWithFeature)
         for project in projectsWithFeature:
             if type(project.artifactIdMapVersion) == dict:
                 if pName in project.artifactIdMapVersion.keys():
@@ -137,8 +124,8 @@ def updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, comm
                     roots = tree.getroot()
                     for d in roots.findall(".//xmlns:properties", namespaces=namespaces):
                         if d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName), namespaces=namespaces) != None:
-                            if isClientVersionCompatible(compareProject.projectVersion,
-                                                         d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName),
+                            if is_client_version_compatible(compareProject.projectVersion,
+                                                            d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName),
                                                                 namespaces=namespaces).text):
                                 # project.projectVersion = compareProject.projectVersion
                                 d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName),
@@ -148,7 +135,7 @@ def updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, comm
                                            encoding='utf-8', method='xml')
 
 
-def updateTree(allTree, deletingNode):
+def update_tree(allTree, deletingNode):
     for nodes in allTree:
         for nodeInPath in nodes.paths:
             for node in nodeInPath:
@@ -165,7 +152,7 @@ def updateTree(allTree, deletingNode):
         nodes.maxLen = x
 
 
-def deleteBaseNodesOnTree(allTrees, baseProjects):
+def delete_base_nodes_on_tree(allTrees, baseProjects):
     for project in baseProjects:
         for nodes in allTrees:
             for nodeInPath in nodes.paths:
@@ -178,38 +165,38 @@ def deleteBaseNodesOnTree(allTrees, baseProjects):
                 allTrees.remove(nodes)
 
 
-def getPathOfOwnerByName(allTree, nameOfNode):
+def get_path_of_owner_by_name(allTree, nameOfNode):
     for node in allTree:
         if node.nameOfOwner == nameOfNode:
             return node
 
 
-def findLeafAndUpdateProjects(originNode, updatingList, allTree):
+def find_leaf_and_update_projects(originNode, updatingList, allTree):
     if originNode != None:
         if originNode.maxLen == 0:
             updatingList.append(originNode.nameOfOwner)
-            updateTree(allTree, originNode)
+            update_tree(allTree, originNode)
             if len(allTree) > 0:
-                findLeafAndUpdateProjects(allTree[0], updatingList, allTree)
+                find_leaf_and_update_projects(allTree[0], updatingList, allTree)
         else:
             for searchNode in originNode.paths:
                 for matchNode in searchNode:
-                    project = getPathOfOwnerByName(allTree, matchNode)
-                    findLeafAndUpdateProjects(project, updatingList, allTree)
+                    project = get_path_of_owner_by_name(allTree, matchNode)
+                    find_leaf_and_update_projects(project, updatingList, allTree)
 
 
-def getReverseOfTree(allTree):
+def get_reverse_or_tree(allTree):
     for node in allTree:
         for i in node.paths:
             i.reverse()
 
 
-def printUpdatingList(updatingList):
+def print_updating_list(updatingList):
     for i in updatingList:
         print(i)
 
 
-def printPaths(allTrees):
+def print_paths(allTrees):
     for i in allTrees:
         string = ''
         for x in i.paths:
@@ -222,49 +209,44 @@ def printPaths(allTrees):
         print(i.maxLen)
 
 
-def origin(path):
+def job(path):
 
     os.chdir(path)
+
+    dependencyMap = defaultdict(list)
+    mapArtifactId = defaultdict(list)
+
     projectNameAndPath = {}
 
     projectsWithFeature = []
-
-    dependencyMap = defaultdict(list)
-
-    mapArtifactId = defaultdict(list)
-
     mapSpecificVersion = []
-
     updatingList = []
-
     baseProjects = []
-
     allTrees = []
-
     commitMessageList = []
 
-    searchForProjectPath(projectNameAndPath)
+    search_for_project_path(projectNameAndPath)
 
-    mapProjects(projectNameAndPath, dependencyMap, mapArtifactId, mapSpecificVersion)
+    map_projects(projectNameAndPath, dependencyMap, mapArtifactId, mapSpecificVersion)
 
-    getBaseProjects(projectNameAndPath, baseProjects, dependencyMap)
+    get_base_projects(projectNameAndPath, baseProjects, dependencyMap)
 
-    createProjectListWithFeatures(dependencyMap, mapArtifactId, projectsWithFeature, mapSpecificVersion,
-                                  projectNameAndPath)
+    create_project_list_with_features(dependencyMap, mapArtifactId, projectsWithFeature, mapSpecificVersion,
+                                      projectNameAndPath)
 
-    createTree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees)
+    create_tree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees)
 
-    addBaseProjectUpdatingList(baseProjects, updatingList)
+    add_base_project_updating_list(baseProjects, updatingList)
 
-    getReverseOfTree(allTrees)
+    get_reverse_or_tree(allTrees)
 
-    deleteBaseNodesOnTree(allTrees, baseProjects)
+    delete_base_nodes_on_tree(allTrees, baseProjects)
 
-    findLeafAndUpdateProjects(allTrees[0], updatingList, allTrees)
+    find_leaf_and_update_projects(allTrees[0], updatingList, allTrees)
 
     #tryGitPython(projectsWithFeature)
 
-    updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList)
+    updating_projects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList)
 
 
 
@@ -292,7 +274,7 @@ def main():
     parser.add_argument('--dir',dest='path',help='Projects root dir', required=True)
     result = parser.parse_args()
     if result is not None:
-        origin(result.path)
+        job(result.path)
 
 
 if __name__ == "__main__":
