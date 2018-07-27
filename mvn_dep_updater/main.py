@@ -1,8 +1,8 @@
 import os
-from git import Repo
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-
+import argparse
+import sys
 
 class Project:
     def __init__(self, projectName, artifactIdMapVersion, projectVersion):
@@ -25,7 +25,6 @@ def getProjectByName(name, projectsWithFeature):
 
 
 def searchForProjectPath(projectNameAndPaths):
-    os.chdir('Add direction')
     for root, dirs, files in os.walk(os.getcwd()):
         for file in files:
             if file.endswith("pom.xml"):
@@ -128,7 +127,6 @@ def createTree(projectNameAndPath, baseProjects, projectsWithFeature, allTrees):
 
 
 def updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList):
-    os.chdir("Add direction")
     for pName in updatingList:
         compareProject = getProjectByName(pName, projectsWithFeature)
         for project in projectsWithFeature:
@@ -224,7 +222,9 @@ def printPaths(allTrees):
         print(i.maxLen)
 
 
-def origin():
+def origin(path):
+
+    os.chdir(path)
     projectNameAndPath = {}
 
     projectsWithFeature = []
@@ -262,11 +262,13 @@ def origin():
 
     findLeafAndUpdateProjects(allTrees[0], updatingList, allTrees)
 
-    tryGitPython(projectsWithFeature)
+    #tryGitPython(projectsWithFeature)
 
     updatingProjects(updatingList, projectNameAndPath, projectsWithFeature, commitMessageList)
 
 
+
+'''
 def tryGitPython(projectsWithFeature):
     os.chdir("D:\projects\maven-dependency-updater")
     repo = Repo("D:\projects\maven-dependency-updater")
@@ -284,9 +286,13 @@ def tryGitPython(projectsWithFeature):
                 if isClientVersionCompatible(a[:len(a) - 9], project.projectVersion):
                     project.projectVersion = a[:len(a) - 9]
 
-
+'''
 def main():
-    origin()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dir',dest='path',help='Projects root dir', required=True)
+    result = parser.parse_args()
+    if result is not None:
+        origin(result.path)
 
 
 if __name__ == "__main__":
