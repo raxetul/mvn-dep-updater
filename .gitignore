@@ -69,3 +69,4 @@ fabric.properties
 
 build/
 dist/
+mvn_dep_updater.egg-info/
