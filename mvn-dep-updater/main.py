@@ -1,12 +1,10 @@
-#!/usr/bin/env python3
+#!/bin/env python3
 import os
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 import argparse
-
-from mvn_dep_updater.data.dependency import Dependency
-from mvn_dep_updater.data.path_tree import PathTree
-from mvn_dep_updater.data.project import Project
+from data.path_tree import PathTree
+from data.project import Project
 
 
 def get_project_by_name(name, projectsWithFeature):
@@ -15,52 +13,40 @@ def get_project_by_name(name, projectsWithFeature):
             return project
 
 
-def search_for_project_path(path):
-    projects = {}
-
-    for root, dirs, files in os.walk(path):
+def search_for_project_path(artifactIdToPathMap):
+    for root, dirs, files in os.walk(os.getcwd()):
         for file in files:
             if file.endswith("pom.xml"):
                 namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
                 tree = ET.parse(os.path.join(root, file))
-                current_root = tree.getroot()
-                project_path = None
-                project_artifact_id = None
-                project_version = None
-
-                for d in current_root.findall("xmlns:artifactId", namespaces=namespaces):
-                    project_artifact_id = d.text
-                    project_path = os.path.join(root, file)
-                    dependency_map = {}
-
-                for xml_dependency in current_root.findall(".//xmlns:dependency", namespaces=namespaces):
-                    dependencyArtifactId = xml_dependency.find(".//xmlns:artifactId", namespaces=namespaces).text
-                    dependency_version_variable_name = None
-                    if xml_dependency.find(".//xmlns:version", namespaces=namespaces) is not None:
-                        version = xml_dependency.find(".//xmlns:version", namespaces=namespaces).text
-                        dependency_version_variable_name = version[2:(len(version) - 1)]
-                    dependency = Dependency(dependencyArtifactId, dependency_version_variable_name)
-
-                    dependency_map[dependencyArtifactId] = dependency
-
-                for xml_project_version in current_root.findall("xmlns:version", namespaces=namespaces):
-                    project_version = xml_project_version.text[:len(xml_project_version.text) - 9]
-
-                project = Project(project_artifact_id, project_version, project_path, dependency_map)
-                projects[project_artifact_id] = project
-
-    for project in projects.values():
-        dependency_ids = list(project.dependencies.keys())
-        for dependency_id in dependency_ids:
-            if dependency_id not in projects.keys():
-                del project.dependencies[dependency_id]
-
-    return projects
+                roots = tree.getroot()
+                for d in roots.findall("xmlns:artifactId", namespaces=namespaces):
+                    artifactIdToPathMap[d.text] = os.path.join(root, file)
 
 
 def add_base_project_updating_list(baseProjects, updatingList):
     for project in baseProjects:
         updatingList.append(project)
+
+
+def map_projects(artifactIdToPathMap, dependencyMap, artifactIdMap, specificVersion):
+    for path in artifactIdToPathMap.values():
+        namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
+        tree = ET.parse(path)
+        currentRoot = tree.getroot()
+        dependentArtifactId = currentRoot.find("xmlns:artifactId", namespaces=namespaces)
+
+        for dependency in currentRoot.findall(".//xmlns:dependency", namespaces=namespaces):
+            dependencyArtifactId = dependency.find(".//xmlns:artifactId", namespaces=namespaces).text
+            if dependencyArtifactId in artifactIdToPathMap.keys():
+                version = dependency.find(".//xmlns:version", namespaces=namespaces).text
+                dependencyMap[dependentArtifactId.text].append(version[2:(len(version) - 1)])
+                artifactIdMap[dependentArtifactId.text].append(dependencyArtifactId)
+
+        print(dependencyMap)
+
+        for sVersion in currentRoot.findall("xmlns:version", namespaces=namespaces):
+            specificVersion.append(sVersion.text[:len(sVersion.text) - 9])
 
 
 def get_base_projects(artifactIdToPathMap, baseProjectList, dependencyMap):
@@ -92,14 +78,14 @@ def create_project_list_with_features(dependencyMap, artifactIdMap, projectWithF
                                       projectNameAndPath):
     count = 0
 
-    for project_name in projectNameAndPath.keys():
-        if project_name in dependencyMap.keys():
-            newDict = dict(zip(artifactIdMap.get(project_name), dependencyMap.get(project_name)))
-            newProject = Project(project_name, newDict, specificVersion[count])  # NEW PROJECT
+    for project in projectNameAndPath.keys():
+        if project in dependencyMap.keys():
+            newDict = dict(zip(artifactIdMap.get(project), dependencyMap.get(project)))
+            newProject = Project(project, newDict, specificVersion[count])
             count += 1
             projectWithFeatures.append(newProject)
         else:
-            newProject = Project(project_name, None, specificVersion[count])  # NEW PROJECT
+            newProject = Project(project, None, specificVersion[count])
             count += 1
             projectWithFeatures.append(newProject)
 
@@ -229,17 +215,14 @@ def print_paths(allTrees):
             string = ''
         print(i.maxLen)
 
-def print_projects(projects):
-    for project in projects.values():
-        print(project.project_id)
-        for dependency in project.dependencies.values():
-            print("------- dependency: " + dependency.dependecy_id + " - " + dependency.dependecy_version)
 
 def job(path):
     os.chdir(path)
 
     dependencyMap = defaultdict(list)
     mapArtifactId = defaultdict(list)
+
+    artifactIdToPathMap = {}
 
     projectsWithFeature = []
     mapSpecificVersion = []
@@ -248,10 +231,12 @@ def job(path):
     allTrees = []
     commitMessageList = []
 
-    projects = search_for_project_path(path)
+    search_for_project_path(artifactIdToPathMap)
 
-    print_projects(projects)
+    map_projects(artifactIdToPathMap, dependencyMap, mapArtifactId, mapSpecificVersion)
 
+    # get_base_projects(artifactIdToPathMap, baseProjects, dependencyMap)
+    #
     # create_project_list_with_features(dependencyMap, mapArtifactId, projectsWithFeature, mapSpecificVersion,
     #                                   artifactIdToPathMap)
     #
@@ -269,33 +254,34 @@ def job(path):
     #
     # updating_projects(updatingList, artifactIdToPathMap, projectsWithFeature, commitMessageList)
 
-    # def tryGitPython(projectsWithFeature):
-    #     os.chdir("D:\projects\maven-dependency-updater")
-    #     repo = Repo("D:\projects\maven-dependency-updater")
-    #     repo.git.checkout('master')
-    #     repo.git.add('main.py', 'pom.xml')
-    #     repo.git.commit('-m', 'Testing')
-    #     repo.git.pull('yerel-yedek', 'master')
-    #     namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-    #     tree = ET.parse('pom.xml')
-    #     roots = tree.getroot()
-    #     for d in roots.findall("xmlns:artifactId", namespaces=namespaces):
-    #         for project in projectsWithFeature:
-    #             if project.projectName == d.text:
-    #                 a = roots.find("xmlns:version", namespaces=namespaces).text
-    #                 if isClientVersionCompatible(a[:len(a) - 9], project.projectVersion):
-    #                     project.projectVersion = a[:len(a) - 9]
+
+'''
+def tryGitPython(projectsWithFeature):
+    os.chdir("D:\projects\maven-dependency-updater")
+    repo = Repo("D:\projects\maven-dependency-updater")
+    repo.git.checkout('master')
+    repo.git.add('main.py', 'pom.xml')
+    repo.git.commit('-m', 'Testing')
+    repo.git.pull('yerel-yedek', 'master')
+    namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
+    tree = ET.parse('pom.xml')
+    roots = tree.getroot()
+    for d in roots.findall("xmlns:artifactId", namespaces=namespaces):
+        for project in projectsWithFeature:
+            if project.projectName == d.text:
+                a = roots.find("xmlns:version", namespaces=namespaces).text
+                if isClientVersionCompatible(a[:len(a) - 9], project.projectVersion):
+                    project.projectVersion = a[:len(a) - 9]
+
+'''
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', dest='path', help='Projects root dir', required=False)
+    parser.add_argument('--dir', dest='path', help='Projects root dir', required=True)
     result = parser.parse_args()
     if result is not None:
-        path = os.getcwd()
-        if result.path is not None:
-            path = result.path
-        job(path)
+        job(result.path)
 
 
 if __name__ == "__main__":
