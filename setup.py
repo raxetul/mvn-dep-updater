@@ -8,7 +8,7 @@ setuptools.setup(
     version="0.0.1",
     author="Tugay ÇALYAN, Emrah URHAN",
     author_email="tugaycalyan@hacettepe.edu.tr, raxetul@gmail.com",
-    description="A local dependency version updater for Apache Maven",
+    description="A local dependency version updater for Apache Maven and Gitlab",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://gitlab.com/tcalyan/mvn_dep_updater",
