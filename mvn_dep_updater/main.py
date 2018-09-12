@@ -154,7 +154,7 @@ def create_update_list(projects):
     updatingList = sorted(projects.values(),key=lambda kv : kv.level,reverse=True)
     return updatingList
 
-def job(path):
+def job(path, hostname, token):
     os.chdir(path)
 
     projects = search_for_project_path(path)
@@ -187,19 +187,17 @@ def job(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', dest='path', help='Projects take an arguements (PATH,GitHub HOSTNAME,GitHub TOKEN)', required=False, nargs=3, metavar=('Path', 'GitHub Hostname', 'GitHub Token'))
+    parser.add_argument('-d', '--dir', dest='path', help='Directory if app is used without current working direcotry', required=False)
+    parser.add_argument('-H', '--hostname', dest='hostname', help='Hostname or IP address of gitlab', required=True)
+    parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
     result = parser.parse_args()
-    #result.path[0] ---> PATH
-    #result.path[1] ---> HOSTNAME
-    #result.path[2] --->Token
 
-    '''
     if result is not None:
         path = os.getcwd()
         if result.path is not None:
             path = result.path
-        job(path)
-    '''
+        job(path, result.hostname, result.token)
+
 
 if __name__ == "__main__":
     main()
