@@ -7,7 +7,6 @@ from urllib.request import urlopen
 import json
 import urllib.parse
 from mvn_dep_updater.data.dependency import Dependency
-from mvn_dep_updater.data.path_tree import PathTree
 from mvn_dep_updater.data.project import Project
 
 
