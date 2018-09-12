@@ -67,6 +67,9 @@ fabric.properties
 # Sonarlint plugin
 .idea/sonarlint
 
+**/*.pyc
+
+**/__pycache__
 build/
 dist/
 mvn_dep_updater.egg-info/
