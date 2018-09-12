@@ -3,17 +3,43 @@ import os
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 import argparse
-
+from urllib.request import urlopen
+import json
+import urllib.parse
 from mvn_dep_updater.data.dependency import Dependency
 from mvn_dep_updater.data.path_tree import PathTree
 from mvn_dep_updater.data.project import Project
 
 
-def get_project_by_name(name, projectsWithFeature):
-    for project in projectsWithFeature:
-        if name == project.projectName:
-            return project
+def get_last_version_from_apache_archiva():
+    data = 'Basic ZGVwbG95OmRlcGxveTE4MTg='
+    header = {'Authorization': data}
+    header['Referer'] = 'http://10.0.0.189:8080'
+    header['Content-Type'] = 'application/json'
 
+    url3 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/artifacts/jvaos-releases'
+    urlArtifact = urllib.request.Request(url3, headers=header)
+    readArtifact = urllib.request.urlopen(urlArtifact)
+    artifactData = json.load(readArtifact)
+    # print(artifactData)
+    projectNameMapLastVersionFromApi = {}
+    for i in range(len(artifactData)):
+        projectNameMapLastVersionFromApi[artifactData[i].get('artifactId')] = None
+
+    for i in projectNameMapLastVersionFromApi.keys():
+        if i != 'JVAOSServiceClient':
+            url2 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/versionsList/com.infodif.jvaos/' + i + '/?repositoryId=jvaos-releases'
+            urlVersions = urllib.request.Request(url2, headers=header)
+            readVersions = urllib.request.urlopen(urlVersions)
+            versionData = json.load(readVersions)
+            projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 1]
+        else:
+            url2 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/versionsList/com.infodif.jvaos.client/' + i + '/?repositoryId=jvaos-releases'
+            urlVersions = urllib.request.Request(url2, headers=header)
+            readVersions = urllib.request.urlopen(urlVersions)
+            versionData = json.load(readVersions)
+            projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 1]
+    return projectNameMapLastVersionFromApi
 
 def search_for_project_path(path):
     projects = {}
@@ -58,16 +84,6 @@ def search_for_project_path(path):
     return projects
 
 
-def add_base_project_updating_list(baseProjects, updatingList):
-    for project in baseProjects:
-        updatingList.append(project)
-
-
-def get_base_projects(artifactIdToPathMap, baseProjectList, dependencyMap):
-    for project in artifactIdToPathMap.keys():
-        if dependencyMap.get(project) == None:
-            baseProjectList.append(project)
-
 
 def is_client_version_compatible(requestVersion, minClientVersion):
     requestVersion = [int(i) for i in requestVersion.split('.')]
@@ -88,186 +104,69 @@ def is_client_version_compatible(requestVersion, minClientVersion):
     return True
 
 
-def create_project_list_with_features(dependencyMap, artifactIdMap, projectWithFeatures, specificVersion,
-                                      projectNameAndPath):
-    count = 0
-
-    for project_name in projectNameAndPath.keys():
-        if project_name in dependencyMap.keys():
-            newDict = dict(zip(artifactIdMap.get(project_name), dependencyMap.get(project_name)))
-            newProject = Project(project_name, newDict, specificVersion[count])  # NEW PROJECT
-            count += 1
-            projectWithFeatures.append(newProject)
-        else:
-            newProject = Project(project_name, None, specificVersion[count])  # NEW PROJECT
-            count += 1
-            projectWithFeatures.append(newProject)
-
-
-def find_paths(project, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists):
-    if project in baseProjectList:
-        balancedPathLists.append(balancedPathList.copy())
-        return
-    else:
-        getProject = get_project_by_name(project, projectsWithFeature)
-        for dependency in getProject.artifactIdMapVersion.keys():
-            if dependency not in baseProjectList:
-                balancedPathList.append(dependency)
-            find_paths(dependency, baseProjectList, projectsWithFeature, balancedPathList, balancedPathLists)
-            balancedPathList.clear()
-
-
-def create_tree(artifactIdToPathMap, baseProjects, projectsWithFeature, allTrees):
-    balancedPathLists = []
-    balancedPathList = []
-    x = 0
-    for project in artifactIdToPathMap.keys():
-        find_paths(project, baseProjects, projectsWithFeature, balancedPathList, balancedPathLists)
-        for i in balancedPathLists:
-            if x < len(i):
-                x = len(i)
-            tree = PathTree(project, x, balancedPathLists.copy())
-        allTrees.append(tree)
-        x = 0
-        balancedPathLists.clear()
-        balancedPathList.clear()
-
-
-def updating_projects(updatingList, artifactIdToPathMap, projectsWithFeature, commitMessageList):
-    for pName in updatingList:
-        compareProject = get_project_by_name(pName, projectsWithFeature)
-        for project in projectsWithFeature:
-            if type(project.artifactIdMapVersion) == dict:
-                if pName in project.artifactIdMapVersion.keys():
+def updating_projects(projects,updatingList,projectNameMapLastVersionFromApi):
+    for updaterProject in updatingList: #type(updaterProject ---> Project)
+        for project in projects.values():
+            if type(project.dependencies) == dict:
+                if updaterProject.project_id in project.dependencies.keys():
                     namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-                    tree = ET.parse(artifactIdToPathMap.get(project.projectName))
+                    tree = ET.parse(project.path)
                     roots = tree.getroot()
-                    for d in roots.findall(".//xmlns:properties", namespaces=namespaces):
-                        if d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName), namespaces=namespaces) != None:
-                            if is_client_version_compatible(compareProject.projectVersion,
-                                                            d.find(
-                                                                ".//xmlns:" + project.artifactIdMapVersion.get(pName),
-                                                                namespaces=namespaces).text):
+                    for property in roots.findall(".//xmlns:properties", namespaces=namespaces):
+
+                        if property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version, namespaces=namespaces) != None:
+                            if is_client_version_compatible(projectNameMapLastVersionFromApi[updaterProject.project_id],
+                                                            updaterProject.project_version):
                                 # project.projectVersion = compareProject.projectVersion
-                                d.find(".//xmlns:" + project.artifactIdMapVersion.get(pName),
-                                       namespaces=namespaces).text = compareProject.projectVersion
+                                property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version,
+                                       namespaces=namespaces).text = projectNameMapLastVersionFromApi[updaterProject.project_id]
                                 ET.register_namespace('', "http://maven.apache.org/POM/4.0.0")
-                                tree.write(artifactIdToPathMap.get(project.projectName), xml_declaration=True,
+                                tree.write(project.path, xml_declaration=True,
                                            encoding='utf-8', method='xml')
+                    del project.dependencies[updaterProject.project_id]
 
-
-def update_tree(allTree, deletingNode):
-    for nodes in allTree:
-        for nodeInPath in nodes.paths:
-            for node in nodeInPath:
-                if node == deletingNode.nameOfOwner:
-                    nodeInPath.remove(node)
-    for nodes in allTree:
-        if nodes.nameOfOwner == deletingNode.nameOfOwner:
-            allTree.remove(deletingNode)
-    for nodes in allTree:
-        x = 0
-        for nodeInPath in nodes.paths:
-            if len(nodeInPath) >= x:
-                x = len(nodeInPath)
-        nodes.maxLen = x
-
-
-def delete_base_nodes_on_tree(allTrees, baseProjects):
-    for project in baseProjects:
-        for nodes in allTrees:
-            for nodeInPath in nodes.paths:
-                for node in nodeInPath:
-                    if node == project:
-                        nodeInPath.remove(node)
-    for project in baseProjects:
-        for nodes in allTrees:
-            if nodes.nameOfOwner == project:
-                allTrees.remove(nodes)
-
-
-def get_path_of_owner_by_name(allTree, nameOfNode):
-    for node in allTree:
-        if node.nameOfOwner == nameOfNode:
-            return node
-
-
-def find_leaf_and_update_projects(originNode, updatingList, allTree):
-    if originNode != None:
-        if originNode.maxLen == 0:
-            updatingList.append(originNode.nameOfOwner)
-            update_tree(allTree, originNode)
-            if len(allTree) > 0:
-                find_leaf_and_update_projects(allTree[0], updatingList, allTree)
-        else:
-            for searchNode in originNode.paths:
-                for matchNode in searchNode:
-                    project = get_path_of_owner_by_name(allTree, matchNode)
-                    find_leaf_and_update_projects(project, updatingList, allTree)
-
-
-def get_reverse_or_tree(allTree):
-    for node in allTree:
-        for i in node.paths:
-            i.reverse()
-
-
-def print_updating_list(updatingList):
-    for i in updatingList:
-        print(i)
-
-
-def print_paths(allTrees):
-    for i in allTrees:
-        string = ''
-        for x in i.paths:
-            for c in x:
-                string += c
-                string += '->'
-            string = string[:len(string) - 2]
-            print('{0}, {1}, {2}'.format(i.nameOfOwner, 'has path', string))
-            string = ''
-        print(i.maxLen)
+def build_dependency_tree(projects):
+    for project in projects.values():
+        for dependency in project.dependencies.values():
+            for sub_dependency in projects[dependency.dependecy_id].dependencies.values():
+                dependency.add_dependency(sub_dependency)
 
 def print_projects(projects):
     for project in projects.values():
-        print(project.project_id)
+        print("Id: "+project.project_id)
+        print("Version: "+project.project_version)
+        print("Path: "+ project.path)
         for dependency in project.dependencies.values():
-            print("------- dependency: " + dependency.dependecy_id + " - " + dependency.dependecy_version)
+            print("------- dependency: " + dependency.dependecy_id + " ----dependency version: " + dependency.dependecy_version)
+
+def set_level_of_projects(projects, dependency, level):
+    if (level > projects[dependency.dependecy_id].level):
+        projects[dependency.dependecy_id].level = level
+    if len(dependency.dependencies.values()) == 0:
+        return
+    else:
+        for sub_dependency in dependency.dependencies.values():
+            set_level_of_projects(projects, sub_dependency, level + 1)
+
+def create_update_list(projects):
+    for project in projects.values():
+        for dependency in project.dependencies.values():
+            set_level_of_projects(projects, dependency, 1)
+    updatingList = sorted(projects.values(),key=lambda kv : kv.level,reverse=True)
+    return updatingList
 
 def job(path):
     os.chdir(path)
 
-    dependencyMap = defaultdict(list)
-    mapArtifactId = defaultdict(list)
-
-    projectsWithFeature = []
-    mapSpecificVersion = []
-    updatingList = []
-    baseProjects = []
-    allTrees = []
-    commitMessageList = []
-
     projects = search_for_project_path(path)
 
-    print_projects(projects)
+    build_dependency_tree(projects)
 
-    # create_project_list_with_features(dependencyMap, mapArtifactId, projectsWithFeature, mapSpecificVersion,
-    #                                   artifactIdToPathMap)
-    #
-    # create_tree(artifactIdToPathMap, baseProjects, projectsWithFeature, allTrees)
-    #
-    # add_base_project_updating_list(baseProjects, updatingList)
-    #
-    # get_reverse_or_tree(allTrees)
-    #
-    # delete_base_nodes_on_tree(allTrees, baseProjects)
-    #
-    # find_leaf_and_update_projects(allTrees[0], updatingList, allTrees)
-    #
-    # #tryGitPython(projectsWithFeature)
-    #
-    # updating_projects(updatingList, artifactIdToPathMap, projectsWithFeature, commitMessageList)
+    updatingList  = create_update_list(projects)
+
+    projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva()
+
+    updating_projects(projects,updatingList,projectNameMapLastVersionFromApi)
 
     # def tryGitPython(projectsWithFeature):
     #     os.chdir("D:\projects\maven-dependency-updater")
@@ -289,14 +188,19 @@ def job(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', dest='path', help='Projects root dir', required=False)
+    parser.add_argument('--dir', dest='path', help='Projects take an arguements (PATH,GitHub HOSTNAME,GitHub TOKEN)', required=False, nargs=3, metavar=('Path', 'GitHub Hostname', 'GitHub Token'))
     result = parser.parse_args()
+    #result.path[0] ---> PATH
+    #result.path[1] ---> HOSTNAME
+    #result.path[2] --->Token
+
+    '''
     if result is not None:
         path = os.getcwd()
         if result.path is not None:
             path = result.path
         job(path)
-
+    '''
 
 if __name__ == "__main__":
     main()

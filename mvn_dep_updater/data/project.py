@@ -4,6 +4,7 @@ class Project:
         self.project_version = project_version
         self.dependencies = dependencies
         self.path = path
+        self.level = 0
 
     def is_base_project(self):
         return len(self.dependencies.keys()) == 0
