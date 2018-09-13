@@ -8,21 +8,23 @@ import json
 import urllib.parse
 from mvn_dep_updater.data.dependency import Dependency
 from mvn_dep_updater.data.project import Project
+import base64
 
-
-def get_last_version_from_apache_archiva(projects,token,hostName):
-    data = token
+def get_last_version_from_apache_archiva(projects, hostName, idPassword, repoId):
+    idPassword = base64.b64encode(bytes(idPassword,'utf-8'))
+    data = 'Basic '+idPassword.decode('ascii')
     header = {'Authorization': data}
     header['Referer'] = hostName
     header['Content-Type'] = 'application/json'
     projectNameMapLastVersionFromApi = {}
 
     for i in projects.keys():
-        url2 = hostName
-        urlVersions = urllib.request.Request(url2, headers=header)
-        readVersions = urllib.request.urlopen(urlVersions)
-        versionData = json.load(readVersions)
-        projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 2]
+        if projects[i].group_id != None :
+            url2 = hostName+'restServices/archivaServices/browseService/versionsList/'+projects[i].group_id+'/' + i + '/?repositoryId='+repoId
+            urlVersions = urllib.request.Request(url2, headers=header)
+            readVersions = urllib.request.urlopen(urlVersions)
+            versionData = json.load(readVersions)
+            projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 2]
     return projectNameMapLastVersionFromApi
 def search_for_project_path(path):
     projects = {}
@@ -36,13 +38,21 @@ def search_for_project_path(path):
                 project_path = None
                 project_artifact_id = None
                 project_version = None
-
+                parent_groupId = None
                 #find and set parent project id
+                if current_root.find("xmlns:groupId", namespaces=namespaces)!=None:
+                    parent_groupId = current_root.find("xmlns:groupId", namespaces=namespaces).text
 
                 for d in current_root.findall("xmlns:artifactId", namespaces=namespaces):
                     project_artifact_id = d.text
                     project_path = os.path.join(root, file)
                     dependency_map = {}
+                for parent in current_root.findall(".//xmlns:parent", namespaces=namespaces):
+                    parent_name = parent.find(".//xmlns:artifactId", namespaces=namespaces).text
+                    parent_version = parent.find(".//xmlns:version", namespaces=namespaces).text
+                    parent_groupId = parent.find(".//xmlns:groupId",namespaces=namespaces).text
+                    dependency = Dependency(parent_name, parent_version, True)
+                    dependency_map[parent_name] = dependency
 
                 for xml_dependency in current_root.findall(".//xmlns:dependency", namespaces=namespaces):
                     dependencyArtifactId = xml_dependency.find(".//xmlns:artifactId", namespaces=namespaces).text
@@ -51,18 +61,16 @@ def search_for_project_path(path):
                         version = xml_dependency.find(".//xmlns:version", namespaces=namespaces).text
                         dependency_version_variable_name = version[2:(len(version) - 1)]
                     dependency = Dependency(dependencyArtifactId, dependency_version_variable_name)
-
                     dependency_map[dependencyArtifactId] = dependency
 
                 for xml_project_version in current_root.findall("xmlns:version", namespaces=namespaces):
                     project_version = xml_project_version.text[:len(xml_project_version.text) - 9]
 
-                project = Project(project_artifact_id, project_version, project_path, dependency_map)
+                project = Project(project_artifact_id, project_version, project_path, dependency_map,parent_groupId)
                 projects[project_artifact_id] = project
 
     for project in projects.values():
         dependency_ids = list(project.dependencies.keys())
-        #projects[project.parent_id].add_child_project(project)
         for dependency_id in dependency_ids:
             if dependency_id not in projects.keys():
                 del project.dependencies[dependency_id]
@@ -99,18 +107,25 @@ def updating_projects(projects,updatingList,projectNameMapLastVersionFromApi):
                     tree = ET.parse(project.path)
                     roots = tree.getroot()
                     # check if parent needs update and set isUpdateNeeded True.
-
-                    for property in roots.findall(".//xmlns:properties", namespaces=namespaces):
-                        if property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version, namespaces=namespaces) != None:
-                            if is_client_version_compatible(projectNameMapLastVersionFromApi[updaterProject.project_id],
-                                                            updaterProject.project_version):
-                                # project.projectVersion = compareProject.projectVersion
-                                property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version,
-                                       namespaces=namespaces).text = projectNameMapLastVersionFromApi[updaterProject.project_id]
+                    if(project.dependencies[updaterProject.project_id].isParent):
+                        if is_client_version_compatible(projectNameMapLastVersionFromApi[updaterProject.project_id],
+                                                     updaterProject.project_version):
+                            for parent_dependency in roots.findall(".//xmlns:parent", namespaces=namespaces):
+                                parent_dependency.find(".//xmlns:version", namespaces=namespaces).text = projectNameMapLastVersionFromApi[updaterProject.project_id]
                                 ET.register_namespace('', "http://maven.apache.org/POM/4.0.0")
                                 tree.write(project.path, xml_declaration=True, encoding='utf-8', method='xml')
-                                isUpdatedNeeed = True
-                    del project.dependencies[updaterProject.project_id]
+                            isUpdatedNeeed = True
+                    else:
+                        for property in roots.findall(".//xmlns:properties", namespaces=namespaces):
+                            if property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version, namespaces=namespaces) != None:
+                                if is_client_version_compatible(projectNameMapLastVersionFromApi[updaterProject.project_id],updaterProject.project_version):
+                                    # project.projectVersion = compareProject.projectVersion
+                                    property.find(".//xmlns:" + project.dependencies[updaterProject.project_id].dependecy_version,
+                                           namespaces=namespaces).text = projectNameMapLastVersionFromApi[updaterProject.project_id]
+                                    ET.register_namespace('', "http://maven.apache.org/POM/4.0.0")
+                                    tree.write(project.path, xml_declaration=True, encoding='utf-8', method='xml')
+                                    isUpdatedNeeed = True
+                        del project.dependencies[updaterProject.project_id]
             if isUpdatedNeeed:
                 updateProjectInGitlabAndBuild(project)
 
@@ -144,7 +159,7 @@ def create_update_list(projects):
     updatingList = sorted(projects.values(),key=lambda kv : kv.level,reverse=True)
     return updatingList
 
-def job(path, token, hostName):
+def job(path, hostName, token, repoId):
     os.chdir(path)
 
     projects = search_for_project_path(path)
@@ -152,14 +167,11 @@ def job(path, token, hostName):
     build_dependency_tree(projects)
 
     updatingList = create_update_list(projects)
-    '''
-    for project in updatingList:
-        print(project.project_id)
-    '''
-    projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, token, hostName)
-    print(projectNameMapLastVersionFromApi)
-    #
-    # updating_projects(projects,updatingList,projectNameMapLastVersionFromApi)
+    projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, hostName, token, repoId)
+
+
+    updating_projects(projects,updatingList,projectNameMapLastVersionFromApi)
+
 
 def updateProjectInGitlabAndBuild(project):
     #     os.chdir("D:\projects\maven-dependency-updater")
@@ -184,14 +196,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dir', dest='path', help='Directory if app is used without current working direcotry', required=False)
     parser.add_argument('-H', '--hostname', dest='hostname', help='Hostname or IP address of gitlab', required=True)
-    parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
+    parser.add_argument('-a', '--idPw', dest='idPw', help='Archiva authorization', required=True)
+    parser.add_argument('-r', '--repoId', dest='repoId', help='Archiva access repository id.', required=True)
     result = parser.parse_args()
+
 
     if result is not None:
         path = os.getcwd()
         if result.path is not None:
             path = result.path
-        job(path, result.hostname, result.token)
+        job(path, result.hostname, result.idPw, result.repoId)
 
 
 if __name__ == "__main__":
