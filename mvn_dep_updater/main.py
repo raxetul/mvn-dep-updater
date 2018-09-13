@@ -10,36 +10,20 @@ from mvn_dep_updater.data.dependency import Dependency
 from mvn_dep_updater.data.project import Project
 
 
-def get_last_version_from_apache_archiva():
-    data = 'Basic ZGVwbG95OmRlcGxveTE4MTg='
+def get_last_version_from_apache_archiva(projects,token,hostName):
+    data = token
     header = {'Authorization': data}
-    header['Referer'] = 'http://10.0.0.189:8080'
+    header['Referer'] = hostName
     header['Content-Type'] = 'application/json'
-
-    url3 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/artifacts/jvaos-releases'
-    urlArtifact = urllib.request.Request(url3, headers=header)
-    readArtifact = urllib.request.urlopen(urlArtifact)
-    artifactData = json.load(readArtifact)
-    # print(artifactData)
     projectNameMapLastVersionFromApi = {}
-    for i in range(len(artifactData)):
-        projectNameMapLastVersionFromApi[artifactData[i].get('artifactId')] = None
 
-    for i in projectNameMapLastVersionFromApi.keys():
-        if i != 'JVAOSServiceClient':
-            url2 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/versionsList/com.infodif.jvaos/' + i + '/?repositoryId=jvaos-releases'
-            urlVersions = urllib.request.Request(url2, headers=header)
-            readVersions = urllib.request.urlopen(urlVersions)
-            versionData = json.load(readVersions)
-            projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 1]
-        else:
-            url2 = 'http://10.0.0.189:8080/restServices/archivaServices/browseService/versionsList/com.infodif.jvaos.client/' + i + '/?repositoryId=jvaos-releases'
-            urlVersions = urllib.request.Request(url2, headers=header)
-            readVersions = urllib.request.urlopen(urlVersions)
-            versionData = json.load(readVersions)
-            projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 1]
+    for i in projects.keys():
+        url2 = hostName
+        urlVersions = urllib.request.Request(url2, headers=header)
+        readVersions = urllib.request.urlopen(urlVersions)
+        versionData = json.load(readVersions)
+        projectNameMapLastVersionFromApi[i] = versionData.get('versions')[len(versionData.get('versions')) - 2]
     return projectNameMapLastVersionFromApi
-
 def search_for_project_path(path):
     projects = {}
 
@@ -78,7 +62,7 @@ def search_for_project_path(path):
 
     for project in projects.values():
         dependency_ids = list(project.dependencies.keys())
-        projects[project.parent_id].add_child_project(project)
+        #projects[project.parent_id].add_child_project(project)
         for dependency_id in dependency_ids:
             if dependency_id not in projects.keys():
                 del project.dependencies[dependency_id]
@@ -160,7 +144,7 @@ def create_update_list(projects):
     updatingList = sorted(projects.values(),key=lambda kv : kv.level,reverse=True)
     return updatingList
 
-def job(path, hostname, token):
+def job(path, token, hostName):
     os.chdir(path)
 
     projects = search_for_project_path(path)
@@ -168,11 +152,12 @@ def job(path, hostname, token):
     build_dependency_tree(projects)
 
     updatingList = create_update_list(projects)
-
+    '''
     for project in updatingList:
         print(project.project_id)
-
-    # projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva()
+    '''
+    projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, token, hostName)
+    print(projectNameMapLastVersionFromApi)
     #
     # updating_projects(projects,updatingList,projectNameMapLastVersionFromApi)
 

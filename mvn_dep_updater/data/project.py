@@ -6,10 +6,6 @@ class Project:
         self.path = path
         self.level = 0
         self.parent_id = parent_id
-        self.child_projects = []
-
-    def add_child_project(self,project):
-        self.child_projects.append(project)
 
     def is_base_project(self):
         return len(self.dependencies.keys()) == 0
