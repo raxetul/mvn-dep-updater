@@ -23,5 +23,6 @@ setuptools.setup(
     },
     install_requires=[
           'GitPython',
+          'python-gitlab'
       ],
 )

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import xml.etree.ElementTree as ET
-from collections import defaultdict
+import gitlab
 import argparse
 from urllib.request import urlopen
 import json
@@ -12,28 +12,6 @@ from git import Repo
 from mvn_dep_updater.data.dependency import Dependency
 from mvn_dep_updater.data.project import Project
 import base64
-
-
-# def get_last_version_from_apache_archiva(projects, hostName, idPassword, repoId):
-#     idPassword = base64.b64encode(bytes(idPassword,'utf-8'))
-#     data = 'Basic '+idPassword.decode('ascii')
-#     header = {'Authorization': data}
-#     header['Referer'] = hostName
-#     header['Content-Type'] = 'application/json'
-#     projectNameMapLastVersionFromApi = {}
-#
-#     for i in projects.keys():
-#         if projects[i].group_id != None :
-#             url2 = hostName+'restServices/archivaServices/browseService/versionsList/'+projects[i].group_id+'/' + i + '/?repositoryId='+repoId
-#             urlVersions = urllib.request.Request(url2, headers=header)
-#             readVersions = urllib.request.urlopen(urlVersions)
-#             versionData = json.load(readVersions)
-#             versions = versionData.get('versions')
-#             if len(versions) > 0:
-#                 projectNameMapLastVersionFromApi[i] = versions[-1]
-#             else:
-#                 projectNameMapLastVersionFromApi[i] = None
-#     return projectNameMapLastVersionFromApi
 
 
 def get_last_version_from_apache_archiva(project, hostName, idPassword, repoId):
@@ -55,18 +33,15 @@ def get_last_version_from_apache_archiva(project, hostName, idPassword, repoId):
             return None
 
 
-
-
 def search_for_project_path(path):
     projects = {}
 
-    for root, dirs, files in os.walk(path):
+    for projectRootPath, dirs, files in os.walk(path):
         for file in files:
             if file.endswith("pom.xml"):
                 namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-                tree = ET.parse(os.path.join(root, file))
+                tree = ET.parse(os.path.join(projectRootPath, file))
                 current_root = tree.getroot()
-                project_path = None
                 project_artifact_id = None
                 project_version = None
                 parent_groupId = None
@@ -76,7 +51,6 @@ def search_for_project_path(path):
 
                 for d in current_root.findall("xmlns:artifactId", namespaces=namespaces):
                     project_artifact_id = d.text
-                    project_path = os.path.join(root, file)
                     dependency_map = {}
 
                 for parent in current_root.findall(".//xmlns:parent", namespaces=namespaces):
@@ -111,7 +85,7 @@ def search_for_project_path(path):
                 for xml_project_version in current_root.findall("xmlns:version", namespaces=namespaces):
                     project_version = xml_project_version.text[:len(xml_project_version.text) - 9]
 
-                project = Project(project_artifact_id, project_version, project_path, dependency_map, parent_groupId)
+                project = Project(project_artifact_id, project_version, projectRootPath, dependency_map, parent_groupId)
                 projects[project_artifact_id] = project
 
     for project in projects.values():
@@ -121,7 +95,6 @@ def search_for_project_path(path):
                 del project.dependencies[dependency_id]
 
     return projects
-
 
 
 def is_update_needed(versionInMvnRepo, currentDependencyVersion):
@@ -145,16 +118,24 @@ def is_update_needed(versionInMvnRepo, currentDependencyVersion):
     return True
 
 
+def update_projects(projects, updatingList, hostName, archiva_token, repoId, server_addr, token):
+    gitlab_server = gitlab.Gitlab(server_addr, private_token=token)
+    gitlab_projects = gitlab_server.projects.list(all=True)
 
-def update_projects(projects, updatingList, hostName, token, repoId):
     for toBeUpdatedProject in updatingList: #type(updaterProject ---> Project)
+        gitlab_project = None
+        for gp in gitlab_projects:
+            if gp.name == toBeUpdatedProject.project_id:
+                gitlab_project = gp
+                break
+
         print('Checking: ' + toBeUpdatedProject.project_id)
         for dependency in toBeUpdatedProject.dependencies.values():
             print('\tDependency: ' + dependency.id)
             dependencyProject = projects[dependency.id]
-            dependencyLatestVersion = get_last_version_from_apache_archiva(dependencyProject, hostName, token, repoId)
+            dependencyLatestVersion = get_last_version_from_apache_archiva(dependencyProject, hostName, archiva_token, repoId)
             namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-            pomTree = ET.parse(toBeUpdatedProject.path)
+            pomTree = ET.parse(toBeUpdatedProject.path + "/pom.xml")
             roots = pomTree.getroot()
             # check if dependency is parent or not
             # version = ""
@@ -175,9 +156,9 @@ def update_projects(projects, updatingList, hostName, token, repoId):
                 if element is not None:
                     element.text = dependencyLatestVersion
                     ET.register_namespace('', "http://maven.apache.org/POM/4.0.0")
-                    pomTree.write(toBeUpdatedProject.path, xml_declaration=True, encoding='utf-8', method='xml')
+                    # pomTree.write(toBeUpdatedProject.path + "/pom.xml", xml_declaration=True, encoding='utf-8', method='xml')
 
-                update_project_and_deploy(toBeUpdatedProject)
+                update_project_and_deploy(toBeUpdatedProject, gitlab_project)
 
 
 def build_dependency_tree(projects):
@@ -191,10 +172,11 @@ def build_dependency_tree(projects):
 def print_projects(projects):
     for project in projects.values():
         print("Id: "+project.project_id)
-        print("Version: "+project.project_version)
+        print("Current Version in repo: "+project.project_version)
         print("Path: "+ project.path)
         for dependency in project.dependencies.values():
             print("------- dependency: " + dependency.dependecy_id + " ----dependency version: " + dependency.dependecy_version)
+
 
 
 def set_level_of_projects(projects, dependency, level):
@@ -215,7 +197,7 @@ def create_update_list(projects):
     return updatingList
 
 
-def job(path, hostName, token, repoId):
+def job(path, hostName, archiva_token, repoId, server, token):
     os.chdir(path)
 
     projects = search_for_project_path(path)
@@ -226,26 +208,37 @@ def job(path, hostName, token, repoId):
 
     # projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, hostName, token, repoId)
 
-    update_projects(projects, orderedUpdateList, hostName, token, repoId)
+    update_projects(projects, orderedUpdateList, hostName, archiva_token, repoId, server, token)
 
 
-def update_project_and_deploy(project):
+def update_project_and_deploy(project, gitlab_project):
 
-    #     os.chdir("D:\projects\maven-dependency-updater")
-    #     repo = Repo("D:\projects\maven-dependency-updater")
-    #     repo.git.checkout('master')
-    #     repo.git.add( 'pom.xml')
-    #     repo.git.commit('-m', 'Testing')
-    #     repo.git.pull('yerel-yedek', 'master')
-    #     namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-    #     tree = ET.parse('pom.xml')
-    #     roots = tree.getroot()
-    #     for d in roots.findall("xmlns:artifactId", namespaces=namespaces):
-    #         for project in projectsWithFeature:
-    #             if project.projectName == d.text:
-    #                 a = roots.find("xmlns:version", namespaces=namespaces).text
-    #                 if isClientVersionCompatible(a[:len(a) - 9], project.projectVersion):
-    # #                     project.projectVersion = a[:len(a) - 9]
+    os.chdir(project.path)
+    repo = Repo(project.path)
+    repo.git.checkout('master')
+    repo.git.pull()
+    for branch in repo.branches:
+        if branch.name == 'update/pom':
+            repo.delete_head('update/pom')
+            print('update/pom branch is deleted, a new one will be created')
+    repo.create_head('update/pom')
+    # repo.git.add( 'pom.xml')
+    # repo.git.commit('-m', 'Dependencies and parent of the project in pom file are updated.')
+    # for remote in repo.remotes:
+    #     if remote.name == 'origin':
+    #         remote.push()
+    #         break
+    # Gitlab API starts here
+    # after push
+    pipelines = gitlab_project.pipelines.list(page=1, per_page=10)
+    for pipeline in pipelines:
+            print(pipeline)
+    # - wait for build and check for success
+    # - if success then merge
+    # - wait 1 second
+    # - deploy
+    # - wait for deployment and check for success
+    # - if success then next one
     pass
 
 
@@ -254,15 +247,16 @@ def main():
     parser.add_argument('-d', '--dir', dest='path', help='Directory if app is used without current working direcotry', required=False)
     parser.add_argument('-H', '--hostname', dest='hostname', help='Hostname or IP address of gitlab with port ex: 192.168.1.2:8080', required=True)
     parser.add_argument('-a', '--aidPw', dest='idPw', help='Apache Archiva authorization in form of user:password', required=True)
-    parser.add_argument('-r', '--repoId', dest='repoId', help='Apache Archiva access repository id.', required=True)
+    parser.add_argument('-r', '--repo-id', dest='repoId', help='Apache Archiva access repository id.', required=True)
+    parser.add_argument('-s', '--gitlab-server', dest='server', help='Gitlab server address including port. Ex: http://192.168.1.3:9090', required=True)
+    parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
     result = parser.parse_args()
-
 
     if result is not None:
         path = os.getcwd()
         if result.path is not None:
             path = result.path
-        job(path, result.hostname, result.idPw, result.repoId)
+        job(path, result.hostname, result.idPw, result.repoId, result.server, result.token)
 
 
 if __name__ == "__main__":
