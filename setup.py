@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="mvn_dep_updater",
+    name="mvn-dep-updater",
     version="0.0.1",
     author="Tugay ÇALYAN, Emrah URHAN",
     author_email="tugaycalyan@hacettepe.edu.tr, raxetul@gmail.com",
@@ -19,10 +19,10 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ),
     entry_points={
-        'console_scripts': ['mvn_dep_updater=mvn_dep_updater.main:main'],
+        'console_scripts': ['mvn-dep-updater=mvn_dep_updater.main:main'],
     },
     install_requires=[
           'GitPython',
           'python-gitlab'
-      ],
+    ],
 )

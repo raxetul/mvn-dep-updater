@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import time
 import xml.etree.ElementTree as ET
 import gitlab
 import argparse
@@ -13,6 +14,7 @@ from mvn_dep_updater.data.dependency import Dependency
 from mvn_dep_updater.data.project import Project
 import base64
 
+sleep_time = 3  # TODO: Magic Number
 
 def get_last_version_from_apache_archiva(project, hostName, idPassword, repoId):
     idPassword = base64.b64encode(bytes(idPassword,'utf-8'))
@@ -130,35 +132,54 @@ def update_projects(projects, updatingList, hostName, archiva_token, repoId, ser
                 break
 
         print('Checking: ' + toBeUpdatedProject.project_id)
+        update_needed = False
+        os.chdir(toBeUpdatedProject.path)
+        local_repo = Repo(toBeUpdatedProject.path)
+        local_repo.git.checkout('master')
+        local_repo.git.pull()
+        for branch in local_repo.branches:
+            if branch.name == 'automatic/update/pom':  # TODO: Magic String
+                local_repo.delete_head('automatic/update/pom', '-D')
+                print('update/pom branch is deleted, a new one will be created')
+        local_repo.create_head('automatic/update/pom')
+        local_repo.git.checkout('automatic/update/pom')
+
+        namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
+        tree = ET.parse(toBeUpdatedProject.path + "/pom.xml", )
+        roots = tree.getroot()
+
         for dependency in toBeUpdatedProject.dependencies.values():
             print('\tDependency: ' + dependency.id)
             dependencyProject = projects[dependency.id]
             dependencyLatestVersion = get_last_version_from_apache_archiva(dependencyProject, hostName, archiva_token, repoId)
-            namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
-            pomTree = ET.parse(toBeUpdatedProject.path + "/pom.xml")
-            roots = pomTree.getroot()
+
             # check if dependency is parent or not
             # version = ""
             if is_update_needed(dependencyLatestVersion, dependency.version):
+                update_needed = True
                 print('\t\tUpdate found=> Current Version: ' + dependency.version + '\t  /\tIn Repo Version: ' + dependencyLatestVersion)
-                element = None
                 if dependency.isParent:
                         for parent_dependency in roots.findall(".//xmlns:parent", namespaces=namespaces):
                             element = parent_dependency.find(".//xmlns:version", namespaces=namespaces)
+                            element.text = dependencyLatestVersion
                 else:
                     if dependency.var_name is not None:
-                        for property in roots.findall(".//xmlns:properties", namespaces=namespaces):
-                            element = property.find(".//xmlns:" + dependency.var_name, namespaces=namespaces)
+                        for xml_property in roots.findall(".//xmlns:properties", namespaces=namespaces):
+                            element = xml_property.find(".//xmlns:" + dependency.var_name, namespaces=namespaces)
+                            if element is not None:
+                                element.text = dependencyLatestVersion
+                                break
                     else:
                         # version =  dependency.version
                         # TODO: Needs fix for none property dependency version values in here
                         pass
-                if element is not None:
-                    element.text = dependencyLatestVersion
-                    ET.register_namespace('', "http://maven.apache.org/POM/4.0.0")
-                    # pomTree.write(toBeUpdatedProject.path + "/pom.xml", xml_declaration=True, encoding='utf-8', method='xml')
 
-                update_project_and_deploy(toBeUpdatedProject, gitlab_project)
+        if update_needed:
+            ET.register_namespace('', 'http://maven.apache.org/POM/4.0.0')
+            tree.write(toBeUpdatedProject.path + "/pom.xml", xml_declaration=True, encoding='utf-8', method='xml')
+            commit_and_push_project(local_repo)
+            time.sleep(sleep_time)
+            merge_and_deploy_project(gitlab_project)
 
 
 def build_dependency_tree(projects):
@@ -168,7 +189,6 @@ def build_dependency_tree(projects):
                 dependency.add_dependency(sub_dependency)
 
 
-
 def print_projects(projects):
     for project in projects.values():
         print("Id: "+project.project_id)
@@ -176,7 +196,6 @@ def print_projects(projects):
         print("Path: "+ project.path)
         for dependency in project.dependencies.values():
             print("------- dependency: " + dependency.dependecy_id + " ----dependency version: " + dependency.dependecy_version)
-
 
 
 def set_level_of_projects(projects, dependency, level):
@@ -211,42 +230,91 @@ def job(path, hostName, archiva_token, repoId, server, token):
     update_projects(projects, orderedUpdateList, hostName, archiva_token, repoId, server, token)
 
 
-def update_project_and_deploy(project, gitlab_project):
+def commit_and_push_project(local_repo):
+    local_repo.git.add('pom.xml')
+    local_repo.git.commit('-m', 'Dependencies and parent of the project in pom file are updated.')
+    for remote in local_repo.remotes:
+        # TODO: Magic String
+        if remote.name == 'origin':
+            remote.push(refspec='automatic/update/pom:automatic/update/pom')
+            local_repo.git.checkout('master')
+            # repo.delete_head('automatic/update/pom')
+            break
+    # TODO: checkout master
 
-    os.chdir(project.path)
-    repo = Repo(project.path)
-    repo.git.checkout('master')
-    repo.git.pull()
-    for branch in repo.branches:
-        if branch.name == 'update/pom':
-            repo.delete_head('update/pom')
-            print('update/pom branch is deleted, a new one will be created')
-    repo.create_head('update/pom')
-    # repo.git.add( 'pom.xml')
-    # repo.git.commit('-m', 'Dependencies and parent of the project in pom file are updated.')
-    # for remote in repo.remotes:
-    #     if remote.name == 'origin':
-    #         remote.push()
-    #         break
-    # Gitlab API starts here
-    # after push
-    pipelines = gitlab_project.pipelines.list(page=1, per_page=10)
-    for pipeline in pipelines:
-            print(pipeline)
-    # - wait for build and check for success
-    # - if success then merge
-    # - wait 1 second
-    # - deploy
-    # - wait for deployment and check for success
-    # - if success then next one
+
+def wait_for_pipeline_to_finish(gitlab_project):
+    running_pipeline_ids = set()
+
+    # fill running pipeline set
+    for pipeline in gitlab_project.pipelines.list(page=1, per_page=10):
+        if pipeline.status == 'running' and pipeline.id not in running_pipeline_ids:
+            running_pipeline_ids.add(pipeline.id)
+
+    if len(running_pipeline_ids) == 0:
+        print('Error: there should be a running pipeline')
+        return False
+
+    # remove pipelines from pipeline set until all finished
+    while True:
+        time.sleep(sleep_time)  # TODO: Magic Number
+        for pipeline_id in running_pipeline_ids.copy():
+            pipeline = gitlab_project.pipelines.get(pipeline_id)
+            if pipeline.status == 'success':
+                running_pipeline_ids.remove(pipeline.id)
+            if pipeline.status == 'failed':
+                exit(1)
+        for pipeline in gitlab_project.pipelines.list(page=1, per_page=10):
+            if pipeline.status == 'running' and pipeline.id not in running_pipeline_ids:
+                running_pipeline_ids.add(pipeline.id)
+        if len(running_pipeline_ids) == 0:
+            break
+    return True
+
+def merge_and_deploy_project(gitlab_project):
+
+    # find and wait for build of last push
+    if not wait_for_pipeline_to_finish(gitlab_project):
+        # exit(1)
+        pass
+
+    # no more running pipeline create merge request and accept it # TODO: Magic String
+    mr = gitlab_project.mergerequests.create({'source_branch': 'automatic/update/pom',
+                                              'target_branch': 'master',
+                                              'title': 'Automatic merge for dependency version update'})
+    time.sleep(1)  # TODO: Magic Number
+    mr.merge()
+    time.sleep(1)
+
+    # deploy
+    job_should_be_run = None
+    job_found = False
+    for pipeline in gitlab_project.pipelines.list(page=1, per_page=5):  # find first deploy
+        for job_to_do in pipeline.jobs.list(page=1, per_page=5):
+            if job_to_do.name == 'job_deploy':  # TODO: Magic String
+                job_should_be_run = gitlab_project.jobs.get(job_to_do.id, lazy=True)
+                job_found = True
+                break
+        if job_found:
+            break
+    job_should_be_run.play()
+
+    time.sleep(1)
+
+    # get running pipelines after job_deploy
+    wait_for_pipeline_to_finish(gitlab_project)
+
+    update_branch = gitlab_project.branches.get('automatic/update/pom')
+    if update_branch is not None:
+        update_branch.delete()
     pass
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dir', dest='path', help='Directory if app is used without current working direcotry', required=False)
-    parser.add_argument('-H', '--hostname', dest='hostname', help='Hostname or IP address of gitlab with port ex: 192.168.1.2:8080', required=True)
-    parser.add_argument('-a', '--aidPw', dest='idPw', help='Apache Archiva authorization in form of user:password', required=True)
+    parser.add_argument('-H', '--host', dest='hostname', help='Hostname or IP address of gitlab with port ex: 192.168.1.2:8080', required=True)
+    parser.add_argument('-a', '--archiva-id-pw', dest='idPw', help='Apache Archiva authorization in form of user:password', required=True)
     parser.add_argument('-r', '--repo-id', dest='repoId', help='Apache Archiva access repository id.', required=True)
     parser.add_argument('-s', '--gitlab-server', dest='server', help='Gitlab server address including port. Ex: http://192.168.1.3:9090', required=True)
     parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
