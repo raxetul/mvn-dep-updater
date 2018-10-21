@@ -225,7 +225,7 @@ def create_update_list(projects):
 
 def print_safe_update_order(projects):
     print('Checking and update order according to project dependencies:')
-    for project in projects.values():
+    for project in projects:
         print('\t' + project.project_id)
 
 def job(path, hostName, archiva_token, repoId, server, token):
