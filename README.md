@@ -6,3 +6,5 @@ Aim of this project is to automatically find and update version of local depende
 Script finds out the local dependencies, categorize them according to deepest dependency chain, then starts updating from deepest one.
 This script can not update external dependencies according to their latest versions.
 
+!Dependency versions should be defined as PROPERTY!
+
