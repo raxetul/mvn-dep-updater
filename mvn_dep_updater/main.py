@@ -41,6 +41,13 @@ def search_for_project_path(path):
     for projectRootPath, dirs, files in os.walk(path):
         for file in files:
             if file.endswith("pom.xml"):
+
+                local_repo = Repo(projectRootPath)
+                local_repo.git.checkout('master')
+                local_repo.git.fetch()
+                print("Pulling master for: " + projectRootPath)
+                local_repo.git.pull()
+
                 namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
                 tree = ET.parse(os.path.join(projectRootPath, file))
                 current_root = tree.getroot()
@@ -132,17 +139,10 @@ def update_projects(projects, updatingList, hostName, archiva_token, repoId, ser
                 break
 
         print('Checking: ' + toBeUpdatedProject.project_id)
+        # TODO: current version should be written
         update_needed = False
         os.chdir(toBeUpdatedProject.path)
         local_repo = Repo(toBeUpdatedProject.path)
-        local_repo.git.checkout('master')
-        local_repo.git.pull()
-        for branch in local_repo.branches:
-            if branch.name == 'automatic/update/pom':  # TODO: Magic String
-                local_repo.delete_head('automatic/update/pom', '-D')
-                print('update/pom branch is deleted, a new one will be created')
-        local_repo.create_head('automatic/update/pom')
-        local_repo.git.checkout('automatic/update/pom')
 
         namespaces = {'xmlns': 'http://maven.apache.org/POM/4.0.0'}
         tree = ET.parse(toBeUpdatedProject.path + "/pom.xml", )
@@ -175,11 +175,19 @@ def update_projects(projects, updatingList, hostName, archiva_token, repoId, ser
                         pass
 
         if update_needed:
+            for branch in local_repo.branches:
+                if branch.name == 'automatic/update/pom':  # TODO: Magic String
+                    local_repo.delete_head('automatic/update/pom', '-D')
+                    print('update/pom branch is deleted, a new one will be created')
+            local_repo.create_head('automatic/update/pom')
+            local_repo.git.checkout('automatic/update/pom')
+
             ET.register_namespace('', 'http://maven.apache.org/POM/4.0.0')
             tree.write(toBeUpdatedProject.path + "/pom.xml", xml_declaration=True, encoding='utf-8', method='xml')
             commit_and_push_project(local_repo)
             time.sleep(sleep_time)
             merge_and_deploy_project(gitlab_project)
+        # TODO: latest version from archiva should be written
 
 
 def build_dependency_tree(projects):
@@ -215,6 +223,10 @@ def create_update_list(projects):
     updatingList = sorted(projects.values(),key=lambda kv : kv.level,reverse=True)
     return updatingList
 
+def print_safe_update_order(projects):
+    print('Checking and update order according to project dependencies:')
+    for project in projects.values():
+        print('\t' + project.project_id)
 
 def job(path, hostName, archiva_token, repoId, server, token):
     os.chdir(path)
@@ -224,6 +236,8 @@ def job(path, hostName, archiva_token, repoId, server, token):
     build_dependency_tree(projects)
 
     orderedUpdateList = create_update_list(projects)
+
+    print_safe_update_order(orderedUpdateList)
 
     # projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, hostName, token, repoId)
 
