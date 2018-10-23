@@ -4,10 +4,17 @@ Aim of this project is to automatically find and update version of local depende
 - Gitlab integration as VCS
 - Apache Archiva integration for maven artifact repository
 
-Script finds out the local dependencies, categorize them according to deepest dependency chain, then starts updating from deepest one.
+Script finds out the local dependencies, categorize them according to deepest dependency chain, then starts updating from deepest one, including parent project update.
 This script can not update external dependencies according to their latest versions.
 
 !Dependency versions should be defined as PROPERTY!
+
+Project is started as an intern project at InfoDif.
+
+Advisor: Emrah URHAN
+
+Intern: Tugay ÇALYAN
+
 
 ## Installation
 Currently not added to pypi.org so project can be installed with pip locally in the root of the project:

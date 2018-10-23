@@ -11,7 +11,7 @@ setuptools.setup(
     description="A local dependency version updater for Apache Maven and Gitlab",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://gitlab.com/tcalyan/mvn_dep_updater",
+    url="https://github.com/raxetul/mvn-dep-updater",
     packages=setuptools.find_packages(),
     classifiers=(
         "Programming Language :: Python :: 3",
