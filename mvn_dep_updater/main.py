@@ -330,7 +330,7 @@ def main():
     parser.add_argument('-H', '--host', dest='hostname', help='Hostname or IP address of gitlab with port ex: 192.168.1.2:8080', required=True)
     parser.add_argument('-a', '--archiva-id-pw', dest='idPw', help='Apache Archiva authorization in form of user:password', required=True)
     parser.add_argument('-r', '--repo-id', dest='repoId', help='Apache Archiva access repository id.', required=True)
-    parser.add_argument('-s', '--gitlab-server', dest='server', help='Gitlab server address including port. Ex: http://192.168.1.3:9090', required=True)
+    parser.add_argument('-aH', '--archiva-host', dest='server', help='Archiva server address including port. Ex: http://192.168.1.3:9090', required=True)
     parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
     result = parser.parse_args()
 
