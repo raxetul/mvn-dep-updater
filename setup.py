@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="mvn-dep-updater",
-    version="0.0.1",
+    version="0.1.0",
     author="Tugay ÇALYAN, Emrah URHAN",
     author_email="tugaycalyan@hacettepe.edu.tr, raxetul@gmail.com",
     description="A local dependency version updater for Apache Maven and Gitlab",

@@ -16,6 +16,7 @@ import base64
 
 sleep_time = 3  # TODO: Magic Number
 
+
 def get_last_version_from_apache_archiva(project, hostName, idPassword, repoId):
     idPassword = base64.b64encode(bytes(idPassword,'utf-8'))
     data = 'Basic '+idPassword.decode('ascii')
@@ -24,7 +25,7 @@ def get_last_version_from_apache_archiva(project, hostName, idPassword, repoId):
     header['Content-Type'] = 'application/json'
 
     if project.group_id != None :
-        url2 = hostName+'restServices/archivaServices/browseService/versionsList/'+project.group_id+'/' + project.project_id + '/?repositoryId='+repoId
+        url2 = hostName+'/restServices/archivaServices/browseService/versionsList/'+project.group_id+'/' + project.project_id + '/?repositoryId='+repoId
         urlVersions = urllib.request.Request(url2, headers=header)
         readVersions = urllib.request.urlopen(urlVersions)
         versionData = json.load(readVersions)
@@ -127,11 +128,11 @@ def is_update_needed(versionInMvnRepo, currentDependencyVersion):
     return True
 
 
-def update_projects(projects, updatingList, hostName, archiva_token, repoId, server_addr, token):
-    gitlab_server = gitlab.Gitlab(server_addr, private_token=token)
+def update_projects(projects, updating_lst, archiva_host_port, archiva_token, archiva_repo_id, gitlab_host, token):
+    gitlab_server = gitlab.Gitlab(url=gitlab_host, private_token=token)
     gitlab_projects = gitlab_server.projects.list(all=True)
 
-    for toBeUpdatedProject in updatingList: #type(updaterProject ---> Project)
+    for toBeUpdatedProject in updating_lst: #type(updaterProject ---> Project)
         gitlab_project = None
         for gp in gitlab_projects:
             if gp.name == toBeUpdatedProject.project_id:
@@ -151,7 +152,7 @@ def update_projects(projects, updatingList, hostName, archiva_token, repoId, ser
         for dependency in toBeUpdatedProject.dependencies.values():
             print('\tDependency: ' + dependency.id)
             dependencyProject = projects[dependency.id]
-            dependencyLatestVersion = get_last_version_from_apache_archiva(dependencyProject, hostName, archiva_token, repoId)
+            dependencyLatestVersion = get_last_version_from_apache_archiva(dependencyProject, archiva_host_port, archiva_token, archiva_repo_id)
 
             # check if dependency is parent or not
             # version = ""
@@ -228,7 +229,7 @@ def print_safe_update_order(projects):
     for project in projects:
         print('\t' + project.project_id)
 
-def job(path, hostName, archiva_token, repoId, server, token):
+def job(path, archiva_host, archiva_token, archiva_repo_id, gitlab_host, token):
     os.chdir(path)
 
     projects = search_for_project_path(path)
@@ -241,7 +242,7 @@ def job(path, hostName, archiva_token, repoId, server, token):
 
     # projectNameMapLastVersionFromApi = get_last_version_from_apache_archiva(projects, hostName, token, repoId)
 
-    update_projects(projects, orderedUpdateList, hostName, archiva_token, repoId, server, token)
+    update_projects(projects, orderedUpdateList, archiva_host, archiva_token, archiva_repo_id, gitlab_host, token)
 
 
 def commit_and_push_project(local_repo):
@@ -260,6 +261,7 @@ def commit_and_push_project(local_repo):
 def wait_for_pipeline_to_finish(gitlab_project):
     running_pipeline_ids = set()
 
+    time.sleep(sleep_time * 3)
     # fill running pipeline set
     for pipeline in gitlab_project.pipelines.list(page=1, per_page=10):
         if pipeline.status == 'running' and pipeline.id not in running_pipeline_ids:
@@ -327,10 +329,10 @@ def merge_and_deploy_project(gitlab_project):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dir', dest='path', help='Directory if app is used without current working direcotry', required=False)
-    parser.add_argument('-H', '--host', dest='hostname', help='Hostname or IP address of gitlab with port ex: 192.168.1.2:8080', required=True)
-    parser.add_argument('-a', '--archiva-id-pw', dest='idPw', help='Apache Archiva authorization in form of user:password', required=True)
-    parser.add_argument('-r', '--repo-id', dest='repoId', help='Apache Archiva access repository id.', required=True)
-    parser.add_argument('-aH', '--archiva-host', dest='server', help='Archiva server address including port. Ex: http://192.168.1.3:9090', required=True)
+    parser.add_argument('-gH', '--gitlab-host', dest='gitlab_host', help='Hostname or IP address of gitlab with port(Without / at the end) ex: http://192.168.1.2:8080', required=True)
+    parser.add_argument('-aip', '--archiva-id-pw', dest='archiva_id_pw', help='Apache Archiva authorization in form of user:password', required=True)
+    parser.add_argument('-ar', '--repo-id', dest='archiva_repo_id', help='Apache Archiva access repository id.', required=True)
+    parser.add_argument('-aH', '--archiva-host', dest='archiva_host', help='Archiva server address including port(Without / at the end). Ex: http://192.168.1.3:9090', required=True)
     parser.add_argument('-t', '--token', dest='token', help='Gitlab access token', required=True)
     result = parser.parse_args()
 
@@ -338,7 +340,7 @@ def main():
         path = os.getcwd()
         if result.path is not None:
             path = result.path
-        job(path, result.hostname, result.idPw, result.repoId, result.server, result.token)
+        job(path, result.archiva_host, result.archiva_id_pw, result.archiva_repo_id, result.gitlab_host, result.token)
 
 
 if __name__ == "__main__":
