@@ -1,4 +1,4 @@
-#Maven Dependency Updater
+# Maven Dependency Updater
 ## About
 Aim of this project is to automatically find and update version of local dependencies with:
 - Gitlab integration as VCS
